@@ -1,0 +1,191 @@
+# opcua-mcp
+
+A natural language interface for OPC-UA servers, built on the Model Context Protocol (MCP). Enables AI assistants to connect to, browse, and read values from OPC-UA servers — including the discovery workflows needed to map live process data to engineering models.
+
+> **Note:** This server is under active development. Current capabilities are read-only.
+
+---
+
+## The Problem
+
+OPC-UA servers in industrial environments expose hundreds or thousands of nodes organized in deep folder hierarchies. Understanding the available data — its structure, data types, and current values — typically requires a dedicated OPC-UA client (UA Expert, Prosys, etc.), knowledge of the server's namespace, and manual node browsing.
+
+For engineers commissioning systems, performing brownfield assessments, or building integrations, this creates friction. The data is there; navigating to it efficiently is the problem.
+
+---
+
+## The Solution
+
+opcua-mcp connects to any OPC-UA server and exposes its node hierarchy as AI-callable tools via the [Model Context Protocol](https://modelcontextprotocol.io/). An AI assistant can connect to the server, walk the node tree, inspect metadata, and read live values conversationally — without needing a dedicated OPC-UA client.
+
+Combined with a SCADA MCP server (e.g. graccess-mcp for AVEVA System Platform), opcua-mcp enables a full brownfield onboarding workflow: browse an OPC-UA source, discover available signals, map them to engineering model attributes, and bind them to live data — driven entirely by natural language.
+
+**Example interactions:**
+
+```
+"Connect to the OPC-UA simulator and show me what's available."
+"Browse the Pump folder and list all the variable nodes."
+"What is the current flow rate on RawWater_01?"
+"Show me the data type and description for the UV_01 Intensity node."
+"Map the OPC-UA nodes to System Platform UDAs and bind them."
+```
+
+---
+
+## Key Capabilities
+
+| Capability | Description |
+|---|---|
+| **Server connection** | Connect to any OPC-UA endpoint with optional username/password authentication |
+| **Node browsing** | Walk the folder hierarchy from the Objects root or any specific node |
+| **Value reading** | Read current value, status code, and timestamp for any variable node |
+| **Node inspection** | Retrieve metadata — display name, browse name, node class, data type, description |
+
+---
+
+## Architecture
+
+```
+AI Assistant (Claude Desktop, Claude Code, Recon chat UI, etc.)
+        │
+        ▼
+opcua-mcp (FastMCP / SSE)
+        │
+        └── OPC-UA Server (asyncua async client, on-demand connections)
+                └── Any OPC-UA 1.03/1.04 compliant server
+```
+
+### Design Decisions
+
+**On-demand async client.** The OPC-UA client connects when `connect_server` is called and persists across subsequent tool calls in the session. asyncua's async client integrates cleanly with FastMCP's async tool execution model without requiring a background thread.
+
+**Node IDs as opaque handles.** `browse_nodes` returns node IDs in standard OPC-UA string format (e.g. `ns=2;i=1001`). The model passes these IDs back to `read_node` and `get_node_info` without needing to understand the format — they're treated as opaque handles.
+
+**Inline values on browse.** Variable nodes include their current value in `browse_nodes` output. This allows the model to get a useful snapshot of a folder's contents in a single call, reducing the round-trips needed to assess an unfamiliar server.
+
+---
+
+## Included Simulator
+
+`simulator.py` runs a self-contained OPC-UA server exposing a synthetic Water Treatment Plant (WTP) data model — 10 equipment instances across 4 subsystems, 33 variable nodes total. Values update on a configurable interval using random-walk (floats) and oscillating boolean generators.
+
+```
+Objects/Plant/WTP/
+  Pump/   RawWater_01, RawWater_02, HighService_01, HighService_02
+            Flow, Pressure, Running, Power
+  Tank/   Clarifier_01, FinishedWater_01
+            Level, pH, Turbidity
+  Dosing/ Chlorine_01, Fluoride_01
+            FlowRate, Running, TankLevel
+  UV/     UV_01, UV_02
+            Intensity, Running, LampHours
+```
+
+The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqtt-mcp`), making it suitable for testing cross-protocol brownfield workflows where the same physical signals are available over both transports.
+
+---
+
+## Technology Stack
+
+| Component | Technology |
+|---|---|
+| MCP Server | Python, [FastMCP](https://github.com/jlowin/fastmcp) |
+| OPC-UA Client/Server | [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) |
+| Protocol | OPC-UA 1.03 / 1.04 |
+| Runtime | Python 3.13 |
+
+---
+
+## MCP Tools
+
+| Tool | Description |
+|---|---|
+| `connect_server` | Connect to an OPC-UA endpoint (anonymous or username/password) |
+| `browse_nodes` | List children of a node; defaults to the Objects root |
+| `read_node` | Read the current value, status code, and timestamp of a variable node |
+| `get_node_info` | Get metadata for any node — class, data type, browse name, description |
+| `disconnect_server` | Disconnect from the current server |
+
+---
+
+## Configuration
+
+| Environment Variable | Default | Description |
+|---|---|---|
+| `FASTMCP_PORT` | `8002` | Port for the FastMCP SSE server |
+| `OPCUA_PORT` | `4840` | Port for the simulator OPC-UA server |
+| `PUBLISH_INTERVAL` | `2` | Seconds between simulator value updates |
+
+---
+
+## Setup
+
+### Prerequisites
+
+- Python 3.13
+- An accessible OPC-UA server, or use the included simulator
+
+### Installation
+
+1. Create and activate a virtual environment:
+    ```powershell
+    python -m venv .venv
+    .venv\Scripts\activate   # Windows
+    pip install -r requirements.txt
+    ```
+
+### Running
+
+**MCP server (Windows PowerShell):**
+```powershell
+.\start_opcua_mcp.ps1
+```
+
+**Simulator (separate window):**
+```powershell
+.\start_simulator.ps1
+```
+
+**Direct:**
+```bash
+python server.py    # MCP server on port 8002
+python simulator.py # OPC-UA simulator on port 4840
+```
+
+### Connecting to Claude Desktop or Claude Code
+
+```json
+{
+  "mcpServers": {
+    "opcua": {
+      "type": "sse",
+      "url": "http://localhost:8002/sse"
+    }
+  }
+}
+```
+
+---
+
+## Limitations and Known Constraints
+
+- **Read-only.** The server cannot write values to OPC-UA nodes. All operations are observational.
+- **Single server.** One OPC-UA connection is maintained at a time. Calling `connect_server` again replaces the existing connection.
+- **No certificate authentication.** Anonymous and username/password auth are supported; X.509 certificate-based security is not yet implemented.
+- **No subscriptions.** Values are read on demand rather than via OPC-UA subscriptions. For high-frequency monitoring, a subscription-based model would be more efficient.
+
+---
+
+## Roadmap Considerations
+
+- **OPC-UA subscriptions** — push-based value updates for high-frequency signals
+- **Write support** — `write_node` tool with confirmation gates for setting values
+- **Certificate authentication** — X.509 security for production OPC-UA servers
+- **Multi-server sessions** — maintain connections to more than one server simultaneously
+- **Brownfield onboarding integration** — guided workflow to map discovered OPC-UA nodes to AVEVA System Platform template UDAs via bind_uda_io
+
+---
+
+## License
+
+MIT
