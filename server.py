@@ -110,6 +110,72 @@ async def browse_nodes(node_id: str = "") -> str:
 
 
 @mcp.tool()
+async def browse_tree(node_id: str = "", max_depth: int = 4) -> str:
+    """Recursively browse the OPC-UA node tree from a starting node.
+
+    Returns the complete subtree up to max_depth levels deep. Variable nodes
+    include their current value, data type, and a binding_node that can be used
+    directly in System Platform InputSource bindings via the OI Gateway OPC-UA channel.
+
+    Binding node format: BrowseName1.BrowseName2...LeafName  (dot-separated, no leading dot)
+    Full InputSource string: OPCUA:WaterSim.<binding_node>
+    (where WaterSim is the OPC-UA namespace alias configured in SMC)
+
+    Args:
+        node_id:   Starting node ID (blank = Objects root).
+        max_depth: How many levels to descend (default 4, max 8).
+    """
+    client = _require_client()
+    max_depth = min(int(max_depth), 8)
+    lines: list[str] = []
+
+    start_node = client.get_node(node_id) if node_id else client.nodes.objects
+    start_name = await _node_display_name(start_node)
+
+    async def recurse(node: Node, depth: int, path: str) -> None:
+        if depth > max_depth:
+            return
+        try:
+            children = await node.get_children()
+        except Exception:
+            return
+        for child in children:
+            if child.nodeid.NamespaceIndex == 0:
+                continue  # skip OPC-UA built-in nodes
+            child_name  = await _node_display_name(child)
+            child_class = await _node_class(child)
+            child_path  = f"{path}/{child_name}" if path else child_name
+            indent      = "  " * depth
+
+            child_id = _nodeid_str(child)
+            if child_class == ua.NodeClass.Variable:
+                try:
+                    value   = await child.read_value()
+                    dt_id   = await child.read_data_type()
+                    dt_name = await _node_display_name(client.get_node(dt_id))
+                    dot_path = child_path.replace("/", ".")
+                    lines.append(
+                        f"{indent}[{dt_name}] {child_name} = {value!r}"
+                        f"  node_id={child_id}  binding_node={dot_path}"
+                    )
+                except Exception:
+                    dot_path = child_path.replace("/", ".")
+                    lines.append(
+                        f"{indent}[Variable] {child_name}"
+                        f"  node_id={child_id}  binding_node={dot_path}"
+                    )
+            else:
+                lines.append(f"{indent}[{child_class.name}] {child_name}  ({child_id})")
+                await recurse(child, depth + 1, child_path)
+
+    await recurse(start_node, 0, "")
+
+    if not lines:
+        return f"No children found under '{start_name}'."
+    return f"Tree from '{start_name}' (max_depth={max_depth}):\n" + "\n".join(lines)
+
+
+@mcp.tool()
 async def read_node(node_id: str) -> str:
     """Read the current value of an OPC-UA variable node.
 

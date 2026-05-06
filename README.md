@@ -2,7 +2,7 @@
 
 A natural language interface for OPC-UA servers, built on the Model Context Protocol (MCP). Enables AI assistants to connect to, browse, and read values from OPC-UA servers — including the discovery workflows needed to map live process data to engineering models.
 
-> **Note:** This server is under active development. Current capabilities are read-only.
+> **Note:** This server is under active development. Browsing and value reading are read-only. `opcua_discover.py` (see below) produces a discovery JSON consumed by the graccess-mcp `onboard_from_discovery` tool to automate full Galaxy onboarding.
 
 ---
 
@@ -38,6 +38,7 @@ Combined with a SCADA MCP server (e.g. graccess-mcp for AVEVA System Platform), 
 |---|---|
 | **Server connection** | Connect to any OPC-UA endpoint with optional username/password authentication |
 | **Node browsing** | Walk the folder hierarchy from the Objects root or any specific node |
+| **Tree discovery** | Recursively browse a full subtree in one call, with binding paths for each variable node |
 | **Value reading** | Read current value, status code, and timestamp for any variable node |
 | **Node inspection** | Retrieve metadata — display name, browse name, node class, data type, description |
 
@@ -102,6 +103,7 @@ The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqt
 |---|---|
 | `connect_server` | Connect to an OPC-UA endpoint (anonymous or username/password) |
 | `browse_nodes` | List children of a node; defaults to the Objects root |
+| `browse_tree` | Recursively browse a full subtree (default depth 4); returns binding paths for each variable node suitable for AVEVA System Platform InputSource configuration |
 | `read_node` | Read the current value, status code, and timestamp of a variable node |
 | `get_node_info` | Get metadata for any node — class, data type, browse name, description |
 | `disconnect_server` | Disconnect from the current server |
@@ -110,11 +112,17 @@ The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqt
 
 ## Configuration
 
+Copy `.env.example` to `.env` and adjust as needed.
+
 | Environment Variable | Default | Description |
 |---|---|---|
 | `FASTMCP_PORT` | `8002` | Port for the FastMCP SSE server |
-| `OPCUA_PORT` | `4840` | Port for the simulator OPC-UA server |
+| `OPCUA_PORT` | `4841` | Port for the simulator OPC-UA server (4840 is reserved on Windows) |
 | `PUBLISH_INTERVAL` | `2` | Seconds between simulator value updates |
+| `OPCUA_ENDPOINT` | `opc.tcp://127.0.0.1:4841/avevawaterSimulator` | Endpoint for `opcua_discover.py` |
+| `OPCUA_NAMESPACE_URI` | `urn:avevawaterSimulator` | Namespace URI used by the simulator |
+| `OPCUA_WTP_PATH` | `Plant.WTP` | Root node path to browse for discovery |
+| `OPCUA_DIO_PREFIX` | `OPCDataSim.Normal.OPCUA.WaterSimGroup` | OPCDataSim binding prefix for graccess-mcp |
 
 ---
 
@@ -149,7 +157,13 @@ The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqt
 **Direct:**
 ```bash
 python server.py    # MCP server on port 8002
-python simulator.py # OPC-UA simulator on port 4840
+python simulator.py # OPC-UA simulator on port 4841
+```
+
+**Discovery (brownfield onboarding):**
+```powershell
+python opcua_discover.py               # outputs opcua_discovery.json
+python opcua_discover.py --out my.json # custom output path
 ```
 
 ### Connecting to Claude Desktop or Claude Code
@@ -164,6 +178,40 @@ python simulator.py # OPC-UA simulator on port 4840
   }
 }
 ```
+
+---
+
+## Brownfield Discovery Script
+
+`opcua_discover.py` browses the OPC-UA server's plant tree and emits a discovery JSON consumed by the graccess-mcp `onboard_from_discovery` tool to automate full Galaxy onboarding.
+
+**What it does:**
+1. Connects to the configured OPC-UA endpoint
+2. Walks the WTP node hierarchy (type folders → instance folders → variable nodes)
+3. Identifies the primary attribute per type (first float = PV) and marks remaining as UDAs
+4. Derives OPCDataSim tag names using the convention `RawWater_01 + Flow → RawWater01_Flow`
+5. Outputs a JSON with `types`, `instances`, `attributes`, and `bindings`
+
+**Output JSON structure:**
+```json
+{
+  "types": {
+    "Pump": {
+      "instances": ["RawWater_01", "RawWater_02", ...],
+      "attributes": [{"name": "Flow", "uda_type": "float", "is_primary": true}, ...]
+    }
+  },
+  "bindings": [
+    {
+      "tagname": "RawWater_01",
+      "galaxy_attr": "PV",
+      "dio_binding": "OPCDataSim.Normal.OPCUA.WaterSimGroup.RawWater01_Flow"
+    }
+  ]
+}
+```
+
+Pass the JSON contents to `onboard_from_discovery` in graccess-mcp to create all templates, UDAs, instances, and IO bindings in one operation.
 
 ---
 
@@ -182,7 +230,6 @@ python simulator.py # OPC-UA simulator on port 4840
 - **Write support** — `write_node` tool with confirmation gates for setting values
 - **Certificate authentication** — X.509 security for production OPC-UA servers
 - **Multi-server sessions** — maintain connections to more than one server simultaneously
-- **Brownfield onboarding integration** — guided workflow to map discovered OPC-UA nodes to AVEVA System Platform template UDAs via bind_uda_io
 
 ---
 
