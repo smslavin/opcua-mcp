@@ -248,6 +248,31 @@ async def get_node_info(node_id: str) -> str:
 
 
 @mcp.tool()
+async def discover_plant(endpoint: str = "") -> str:
+    """Browse the OPC-UA plant hierarchy and return a discovery JSON for Galaxy onboarding.
+
+    Runs the same discovery logic as opcua_discover.py: walks the WTP node tree,
+    identifies equipment types and instances, marks the primary attribute (PV) per type,
+    and generates OPCDataSim binding paths for every variable node.
+
+    The returned JSON string can be passed directly to the graccess-mcp
+    onboard_from_discovery tool to create templates, UDAs, instances, and IO
+    bindings in one operation — no copy-paste required.
+
+    Args:
+        endpoint: OPC-UA endpoint URL. Defaults to OPCUA_ENDPOINT env var.
+    """
+    import json
+    from opcua_discover import discover
+    url = endpoint or os.environ.get("OPCUA_ENDPOINT", "opc.tcp://127.0.0.1:4841/avevawaterSimulator")
+    try:
+        result = await discover(url)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return f"Discovery failed: {e}"
+
+
+@mcp.tool()
 async def disconnect_server() -> str:
     """Disconnect from the current OPC-UA server."""
     global _client, _server_url

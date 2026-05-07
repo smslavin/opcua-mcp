@@ -106,6 +106,7 @@ The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqt
 | `browse_tree` | Recursively browse a full subtree (default depth 4); returns binding paths for each variable node suitable for AVEVA System Platform InputSource configuration |
 | `read_node` | Read the current value, status code, and timestamp of a variable node |
 | `get_node_info` | Get metadata for any node — class, data type, browse name, description |
+| `discover_plant` | Browse the full plant hierarchy and return a discovery JSON ready to pass to graccess-mcp `onboard_from_discovery` — no file export or copy-paste needed |
 | `disconnect_server` | Disconnect from the current server |
 
 ---
