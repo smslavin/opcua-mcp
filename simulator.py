@@ -156,16 +156,16 @@ async def main():
     idx = await server.register_namespace(URI)
 
     objects = server.nodes.objects
-    plant_folder = await objects.add_folder(idx, "Plant")
-    wtp_folder   = await plant_folder.add_folder(idx, "WTP")
+    plant_folder = await objects.add_folder(ua.NodeId("Plant", idx), "Plant")
+    wtp_folder   = await plant_folder.add_folder(ua.NodeId("Plant.WTP", idx), "WTP")
 
     variable_nodes: list[tuple] = []
     type_folders: dict = {}
 
     for obj_type, instance_id, attrs in INSTANCES:
         if obj_type not in type_folders:
-            type_folders[obj_type] = await wtp_folder.add_folder(idx, obj_type)
-        inst_folder = await type_folders[obj_type].add_folder(idx, instance_id)
+            type_folders[obj_type] = await wtp_folder.add_folder(ua.NodeId(f"Plant.WTP.{obj_type}", idx), obj_type)
+        inst_folder = await type_folders[obj_type].add_folder(ua.NodeId(f"Plant.WTP.{obj_type}.{instance_id}", idx), instance_id)
 
         for attr_name, gen in attrs.items():
             node_id = ua.NodeId(f"Plant.WTP.{obj_type}.{instance_id}.{attr_name}", idx)
