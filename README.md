@@ -161,6 +161,21 @@ python server.py    # MCP server on port 8002
 python simulator.py # OPC-UA simulator on port 4841
 ```
 
+### Running as Windows Services (recommended for lab / demo VMs)
+
+Installs OpcuaMCP and OpcuaSimulator as auto-start Windows services via [NSSM](https://nssm.cc/download):
+
+1. Install NSSM and add it to PATH
+2. Edit the Configuration block at the top of `install_services.ps1` (OPC-UA port, publish interval)
+3. Run as Administrator:
+   ```powershell
+   .\install_services.ps1
+   ```
+
+To remove: `.\uninstall_services.ps1` (run as Administrator).  
+Logs are written to `logs\` with 10 MB rotation and automatic restart on crash.  
+The simulator is started before the MCP server so data is ready on first tool call.
+
 **Discovery (brownfield onboarding):**
 ```powershell
 python opcua_discover.py               # outputs opcua_discovery.json
