@@ -5,8 +5,8 @@
 
 .DESCRIPTION
     Installs two services:
-      OpcuaMCP        — OPC-UA MCP server     (port 8002)
-      OpcuaSimulator  — OPC-UA simulator      (port 4841)
+      AVEVA Demo OpcuaMCP        — OPC-UA MCP server     (port 8002)
+      AVEVA Demo OpcuaSimulator  — OPC-UA simulator      (port 4841)
 
     NSSM must be on PATH (https://nssm.cc/download). Run as Administrator.
 
@@ -37,7 +37,7 @@ $exe = Join-Path $Root ".venv\Scripts\python.exe"
 
 $Services = @(
     @{
-        Name   = "OpcuaMCP"
+        Name   = "AVEVA Demo OpcuaMCP"
         Args   = "server.py"
         Env    = "FASTMCP_PORT=8002"
         LogOut = Join-Path $LogDir "opcua-mcp-stdout.log"
@@ -45,7 +45,7 @@ $Services = @(
         Desc   = "OPC-UA MCP Server — brownfield OPC-UA data access (port 8002)"
     },
     @{
-        Name   = "OpcuaSimulator"
+        Name   = "AVEVA Demo OpcuaSimulator"
         Args   = "simulator.py"
         Env    = "OPCUA_PORT=$OpcuaPort`nPUBLISH_INTERVAL=$PublishInterval"
         LogOut = Join-Path $LogDir "opcua-simulator-stdout.log"
@@ -83,7 +83,7 @@ foreach ($svc in $Services) {
 
 Write-Host "`nStarting services ..." -ForegroundColor Cyan
 # Start simulator first so data is ready when MCP server fields its first query
-foreach ($name in @("OpcuaSimulator", "OpcuaMCP")) {
+foreach ($name in @("AVEVA Demo OpcuaSimulator", "AVEVA Demo OpcuaMCP")) {
     nssm start $name
     Start-Sleep -Milliseconds 500
     $status = (Get-Service -Name $name).Status
