@@ -1,5 +1,6 @@
 """OPC-UA MCP server — browse and read OPC-UA nodes via FastMCP tools."""
 
+import logging
 import os
 from asyncua import Client, ua
 from asyncua.common.node import Node
@@ -8,7 +9,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("opcua-mcp")
+
 mcp = FastMCP("opcua-mcp", port=int(os.environ.get("FASTMCP_PORT", 8002)))
+
+MAX_BROWSE_LINES = 500
 
 _client: Client | None = None
 _server_url: str = ""
@@ -43,7 +52,8 @@ async def connect_server(url: str, username: str = "", password: str = "") -> st
     Args:
         url:      OPC-UA endpoint, e.g. "opc.tcp://localhost:4840/simulator"
         username: Optional username for user/password auth.
-        password: Optional password.
+        password: Optional password. Note: credentials appear as plain tool
+                  arguments — use only in trusted/demo environments.
     """
     global _client, _server_url
     if _client is not None:
@@ -60,6 +70,7 @@ async def connect_server(url: str, username: str = "", password: str = "") -> st
     await client.connect()
     _client = client
     _server_url = url
+    logger.info("Connected to %s", url)
 
     server_node = client.nodes.server
     name = (await server_node.read_display_name()).Text
@@ -128,20 +139,27 @@ async def browse_tree(node_id: str = "", max_depth: int = 4) -> str:
     client = _require_client()
     max_depth = min(int(max_depth), 8)
     lines: list[str] = []
+    truncated = False
 
     start_node = client.get_node(node_id) if node_id else client.nodes.objects
     start_name = await _node_display_name(start_node)
 
     async def recurse(node: Node, depth: int, path: str) -> None:
-        if depth > max_depth:
+        nonlocal truncated
+        if depth > max_depth or truncated:
             return
         try:
             children = await node.get_children()
         except Exception:
             return
         for child in children:
+            if truncated:
+                return
             if child.nodeid.NamespaceIndex == 0:
                 continue  # skip OPC-UA built-in nodes
+            if len(lines) >= MAX_BROWSE_LINES:
+                truncated = True
+                return
             child_name  = await _node_display_name(child)
             child_class = await _node_class(child)
             child_path  = f"{path}/{child_name}" if path else child_name
@@ -172,7 +190,10 @@ async def browse_tree(node_id: str = "", max_depth: int = 4) -> str:
 
     if not lines:
         return f"No children found under '{start_name}'."
-    return f"Tree from '{start_name}' (max_depth={max_depth}):\n" + "\n".join(lines)
+    result = f"Tree from '{start_name}' (max_depth={max_depth}):\n" + "\n".join(lines)
+    if truncated:
+        result += f"\n\n[Truncated: showing first {MAX_BROWSE_LINES} nodes. Use browse_nodes with a specific node_id to explore sub-trees.]"
+    return result
 
 
 @mcp.tool()
@@ -266,9 +287,12 @@ async def discover_plant(endpoint: str = "") -> str:
     from opcua_discover import discover
     url = endpoint or os.environ.get("OPCUA_ENDPOINT", "opc.tcp://127.0.0.1:4841/avevawaterSimulator")
     try:
-        result = await discover(url)
+        # Reuse existing connection when already connected, avoiding a second OPC-UA session.
+        existing = _client if (_client is not None and (not endpoint or endpoint == _server_url)) else None
+        result = await discover(url, client=existing)
         return json.dumps(result, indent=2)
     except Exception as e:
+        logger.error("discover_plant failed: %s", e)
         return f"Discovery failed: {e}"
 
 
@@ -285,6 +309,7 @@ async def disconnect_server() -> str:
     _client = None
     url = _server_url
     _server_url = ""
+    logger.info("Disconnected from %s", url)
     return f"Disconnected from {url}."
 
 
