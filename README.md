@@ -18,7 +18,7 @@ For engineers commissioning systems, performing brownfield assessments, or build
 
 opcua-mcp connects to any OPC-UA server and exposes its node hierarchy as AI-callable tools via the [Model Context Protocol](https://modelcontextprotocol.io/). An AI assistant can connect to the server, walk the node tree, search by name, inspect metadata, and read live values conversationally — without needing a dedicated OPC-UA client.
 
-Combined with a SCADA MCP server (e.g. graccess-mcp for AVEVA System Platform), opcua-mcp enables a full brownfield onboarding workflow: browse an OPC-UA source, discover available signals, map them to engineering model attributes, and bind them to live data — driven entirely by natural language.
+Combined with a SCADA MCP server, opcua-mcp enables a full brownfield onboarding workflow: browse an OPC-UA source, discover available signals, map them to engineering model attributes, and bind them to live data — driven entirely by natural language.
 
 **Example interactions:**
 
