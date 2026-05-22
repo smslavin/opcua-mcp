@@ -1,5 +1,6 @@
 """OPC-UA MCP server — browse and read OPC-UA nodes via FastMCP tools."""
 
+import asyncio
 import logging
 import os
 from asyncua import Client, ua
@@ -22,12 +23,46 @@ MAX_SEARCH_RESULTS = 100
 
 _client: Client | None = None
 _server_url: str = ""
+_reconnect_lock = asyncio.Lock()
 
 
-def _require_client() -> Client:
-    if _client is None:
+async def _watch_client(client: Client, url: str) -> None:
+    """Background task: clear _client when the connection drops."""
+    global _client
+    while True:
+        await asyncio.sleep(5)
+        if _client is not client:
+            return  # replaced by a newer connect call
+        try:
+            await client.nodes.server_state.read_value()
+        except Exception:
+            if _client is client:
+                logger.warning("OPC-UA connection to %s lost — will auto-reconnect on next call", url)
+                _client = None
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            return
+
+
+async def _get_client() -> Client:
+    """Return the active client, auto-reconnecting if the connection was lost."""
+    global _client
+    if _client is not None:
+        return _client
+    if not _server_url:
         raise RuntimeError("Not connected. Call connect_server first.")
-    return _client
+    async with _reconnect_lock:
+        if _client is not None:
+            return _client
+        logger.info("Auto-reconnecting to %s …", _server_url)
+        client = Client(url=_server_url)
+        await client.connect()
+        _client = client
+        asyncio.ensure_future(_watch_client(client, _server_url))
+        logger.info("Reconnected to %s", _server_url)
+        return _client
 
 
 def _nodeid_str(node: Node) -> str:
@@ -111,6 +146,7 @@ async def connect_server(url: str, username: str = "", password: str = "") -> st
     await client.connect()
     _client = client
     _server_url = url
+    asyncio.ensure_future(_watch_client(client, url))
     logger.info("Connected to %s", url)
 
     server_node = client.nodes.server
@@ -130,7 +166,7 @@ async def list_namespaces() -> str:
     Returns each namespace's index and URI. Use the index as the 'ns=' prefix
     when constructing node IDs, or as the namespace_filter value in browse_nodes.
     """
-    client = _require_client()
+    client = await _get_client()
     ns_array = await client.get_namespace_array()
     lines = [f"  {i}: {uri}" for i, uri in enumerate(ns_array)]
     return "Namespaces:\n" + "\n".join(lines)
@@ -150,7 +186,7 @@ async def browse_nodes(node_id: str = "", namespace_filter: str = "") -> str:
         namespace_filter: Optional namespace URI (e.g. "urn:myServer") to show only children
                           in that namespace. Leave blank to show all namespaces.
     """
-    client = _require_client()
+    client = await _get_client()
     node = client.get_node(node_id) if node_id else client.nodes.objects
 
     ns_index: int | None = None
@@ -208,7 +244,7 @@ async def browse_by_path(path: str) -> str:
     Args:
         path: Slash-separated browse path starting from the server Root node.
     """
-    client = _require_client()
+    client = await _get_client()
     segments = [s.strip() for s in path.split("/") if s.strip()]
     try:
         node = await client.nodes.root.get_child(segments)
@@ -260,7 +296,7 @@ async def browse_tree(node_id: str = "", max_depth: int = 4) -> str:
         node_id:   Starting node ID (blank = Objects root).
         max_depth: How many levels to descend (default 4, max 8).
     """
-    client = _require_client()
+    client = await _get_client()
     max_depth = min(int(max_depth), 8)
     lines: list[str] = []
     truncated = False
@@ -327,7 +363,7 @@ async def read_node(node_id: str) -> str:
     Args:
         node_id: OPC-UA node ID string returned by browse_nodes, e.g. "ns=2;i=1005".
     """
-    client = _require_client()
+    client = await _get_client()
     node = client.get_node(node_id)
 
     name  = await _node_display_name(node)
@@ -354,7 +390,7 @@ async def read_multiple(node_ids: list[str]) -> str:
     Args:
         node_ids: List of OPC-UA node ID strings, e.g. ["ns=2;i=1001", "ns=2;i=1002"].
     """
-    client = _require_client()
+    client = await _get_client()
     if not node_ids:
         return "No node IDs provided."
     lines = []
@@ -382,7 +418,7 @@ async def get_node_info(node_id: str) -> str:
     Args:
         node_id: OPC-UA node ID string, e.g. "ns=2;i=1005".
     """
-    client = _require_client()
+    client = await _get_client()
     node = client.get_node(node_id)
 
     name       = await _node_display_name(node)
@@ -433,7 +469,7 @@ async def search_nodes(query: str, start_node_id: str = "", max_depth: int = 6) 
         start_node_id: Starting node ID (blank = Objects root).
         max_depth:     Maximum depth to walk (default 6, max 10).
     """
-    client = _require_client()
+    client = await _get_client()
     max_depth = min(int(max_depth), 10)
     start = client.get_node(start_node_id) if start_node_id else client.nodes.objects
     results = await _search_walk(start, query, max_depth)
@@ -459,7 +495,7 @@ async def search_in_modelview(query: str, root_node_id: str, max_depth: int = 6)
         root_node_id: Node ID of the subtree root to search within, e.g. "ns=2;i=1001".
         max_depth:    Maximum depth to walk from root (default 6, max 10).
     """
-    client = _require_client()
+    client = await _get_client()
     max_depth = min(int(max_depth), 10)
     root = client.get_node(root_node_id)
     try:
@@ -501,7 +537,7 @@ async def discover_plant(endpoint: str = "", namespace_uri: str = "", wtp_path: 
     from opcua_discover import discover
     url = endpoint or os.environ.get("OPCUA_ENDPOINT", "opc.tcp://127.0.0.1:4841/avevawaterSimulator")
     try:
-        existing = _client if (_client is not None and (not endpoint or endpoint == _server_url)) else None
+        existing = await _get_client() if (not endpoint or endpoint == _server_url) else None
         result = await discover(
             url,
             client=existing,
@@ -518,13 +554,14 @@ async def discover_plant(endpoint: str = "", namespace_uri: str = "", wtp_path: 
 async def disconnect_server() -> str:
     """Disconnect from the current OPC-UA server."""
     global _client, _server_url
-    if _client is None:
+    current = _client
+    if current is None:
         return "Not connected."
+    _client = None
     try:
-        await _client.disconnect()
+        await current.disconnect()
     except Exception:
         pass
-    _client = None
     url = _server_url
     _server_url = ""
     logger.info("Disconnected from %s", url)
