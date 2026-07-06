@@ -12,12 +12,17 @@ Environment:
 """
 
 import asyncio
+import json
 import os
 import random
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from asyncua import Server, ua
 from asyncua.server import internal_session as _is
 from dotenv import load_dotenv
+
+from faults import FaultMode, FaultState, INSTANCE_FAULT_MODES
 
 
 # OI Gateway requests EventNotifier (attr=12) on Variable nodes during discovery.
@@ -99,6 +104,104 @@ load_dotenv(override=True)
 PORT     = int(os.environ.get("OPCUA_PORT", 4841))
 INTERVAL = float(os.environ.get("PUBLISH_INTERVAL", 2))
 URI      = "urn:avevawaterSimulator"
+FAULT_HTTP_PORT = int(os.environ.get("FAULT_HTTP_PORT", 8092))
+
+
+# ------------------------------------------------------------------
+# Fault state registry
+# ------------------------------------------------------------------
+
+# Initialise one FaultState per WTP instance
+_fault_states: dict[str, FaultState] = {
+    instance: FaultState()
+    for instance in INSTANCE_FAULT_MODES
+}
+
+# Thread-safe lock for fault state access
+_fault_lock = threading.Lock()
+
+
+def get_fault_status() -> dict[str, str]:
+    with _fault_lock:
+        return {inst: fs.mode.value for inst, fs in _fault_states.items()}
+
+
+def set_fault(target: str, mode_str: str) -> bool:
+    """Returns False if target or mode is unknown."""
+    if target not in _fault_states:
+        return False
+    try:
+        mode = FaultMode(mode_str)
+    except ValueError:
+        return False
+    allowed = INSTANCE_FAULT_MODES.get(target, [])
+    if mode not in allowed:
+        return False
+    with _fault_lock:
+        _fault_states[target].set_mode(mode)
+    return True
+
+
+# ------------------------------------------------------------------
+# HTTP control plane (threaded) — mirrors graccess-mcp/simulator/mqtt_simulator.py
+# so the chat UI's fault injection panel can drive both simulators together.
+# ------------------------------------------------------------------
+
+class _FaultHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # suppress default access log
+
+    def _send_json(self, code: int, data) -> None:
+        body = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path == "/status":
+            self._send_json(200, get_fault_status())
+        elif self.path == "/fault-modes":
+            modes = {
+                inst: [m.value for m in modes]
+                for inst, modes in INSTANCE_FAULT_MODES.items()
+            }
+            self._send_json(200, modes)
+        elif self.path == "/health":
+            self._send_json(200, {"status": "ok"})
+        else:
+            self._send_json(404, {"error": "not found"})
+
+    def do_POST(self):
+        if self.path == "/fault":
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                body = json.loads(self.rfile.read(length))
+                target = body.get("target", "")
+                mode = body.get("mode", "")
+                if set_fault(target, mode):
+                    self._send_json(200, {"ok": True, "target": target, "mode": mode})
+                else:
+                    self._send_json(400, {"error": f"unknown target '{target}' or mode '{mode}'"})
+            except Exception as e:
+                self._send_json(400, {"error": str(e)})
+        else:
+            self._send_json(404, {"error": "not found"})
+
+
+def _start_http_server():
+    server = HTTPServer(("127.0.0.1", FAULT_HTTP_PORT), _FaultHandler)
+    print(f"[fault-http] listening on 127.0.0.1:{FAULT_HTTP_PORT}")
+    server.serve_forever()
 
 
 class RandomWalk:
@@ -147,6 +250,8 @@ INSTANCES = [
 
 
 async def main():
+    threading.Thread(target=_start_http_server, daemon=True).start()
+
     server = Server()
     await server.init()
     server.set_endpoint(f"opc.tcp://127.0.0.1:{PORT}/avevawaterSimulator")
@@ -177,7 +282,7 @@ async def main():
                     ua.Variant(float(gen.value), ua.VariantType.Float)
                 )
             # read-only to external clients; simulator writes via server-side API
-            variable_nodes.append((var, gen))
+            variable_nodes.append((var, gen, instance_id, attr_name))
 
     attr_count = sum(len(a) for _, _, a in INSTANCES)
     print(f"OPC-UA WTP Simulator")
@@ -190,8 +295,14 @@ async def main():
 
     async with server:
         while True:
-            for var, gen in variable_nodes:
-                value = gen.next()
+            with _fault_lock:
+                for fs in _fault_states.values():
+                    fs.tick()
+
+            for var, gen, instance_id, attr_name in variable_nodes:
+                raw = gen.next()
+                fs = _fault_states.get(instance_id)
+                value = fs.apply(attr_name, raw) if fs else raw
                 if isinstance(gen, OscillatingBool):
                     await var.write_value(bool(value))
                 else:
