@@ -6,7 +6,7 @@
 .DESCRIPTION
     Installs two services:
       AVEVA Demo OpcuaMCP        — OPC-UA MCP server     (port 8002)
-      AVEVA Demo OpcuaSimulator  — OPC-UA simulator      (port 4841)
+      AVEVA Demo OpcuaSimulator  — OPC-UA simulator      (port 4841, fault API port 8092)
 
     NSSM must be on PATH (https://nssm.cc/download). Run as Administrator.
 
@@ -23,6 +23,7 @@ $ErrorActionPreference = "Stop"
 $Root            = $PSScriptRoot
 $OpcuaPort       = "4841"
 $PublishInterval = "2"
+$FaultHttpPort   = "8092"
 
 # ── End Configuration ──────────────────────────────────────────────────────────
 
@@ -47,10 +48,10 @@ $Services = @(
     @{
         Name   = "AVEVA Demo OpcuaSimulator"
         Args   = "simulator.py"
-        Env    = "OPCUA_PORT=$OpcuaPort`nPUBLISH_INTERVAL=$PublishInterval"
+        Env    = "OPCUA_PORT=$OpcuaPort`nPUBLISH_INTERVAL=$PublishInterval`nFAULT_HTTP_PORT=$FaultHttpPort"
         LogOut = Join-Path $LogDir "opcua-simulator-stdout.log"
         LogErr = Join-Path $LogDir "opcua-simulator-stderr.log"
-        Desc   = "OPC-UA Simulator — synthetic WTP data via asyncua (port $OpcuaPort)"
+        Desc   = "OPC-UA Simulator — synthetic WTP data via asyncua (port $OpcuaPort), fault API (port $FaultHttpPort)"
     }
 )
 
