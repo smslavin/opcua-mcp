@@ -60,7 +60,7 @@ Combined with a SCADA MCP server, opcua-mcp enables a full brownfield onboarding
 AI Assistant (Claude Desktop, Claude Code, Recon chat UI, etc.)
         │
         ▼
-opcua-mcp (FastMCP / SSE)
+opcua-mcp (MCP SDK / SSE)
         │
         └── OPC-UA Server (asyncua async client, on-demand connections)
                 └── Any OPC-UA 1.03/1.04 compliant server
@@ -68,7 +68,7 @@ opcua-mcp (FastMCP / SSE)
 
 ### Design Decisions
 
-**On-demand async client.** The OPC-UA client connects when `connect_server` is called and persists across subsequent tool calls in the session. asyncua's async client integrates cleanly with FastMCP's async tool execution model without requiring a background thread.
+**On-demand async client.** The OPC-UA client connects when `connect_server` is called and persists across subsequent tool calls in the session. asyncua's async client integrates cleanly with the MCP SDK's async tool execution model without requiring a background thread.
 
 **Node IDs as opaque handles.** `browse_nodes` returns node IDs in standard OPC-UA string format (e.g. `ns=2;i=1001`). The model passes these IDs back to `read_node`, `get_node_info`, and `search_in_modelview` without needing to understand the format — they're treated as opaque handles.
 
@@ -104,7 +104,7 @@ The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqt
 
 | Component | Technology |
 |---|---|
-| MCP Server | Python, [FastMCP](https://github.com/jlowin/fastmcp) |
+| MCP Server | Python, [MCP SDK](https://github.com/modelcontextprotocol/python-sdk) (`MCPServer`, mcp>=2.0) |
 | OPC-UA Client/Server | [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) |
 | Protocol | OPC-UA 1.03 / 1.04 |
 | Runtime | Python 3.13 |
@@ -136,7 +136,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `FASTMCP_PORT` | `8002` | Port for the FastMCP SSE server |
+| `FASTMCP_PORT` | `8002` | Port for the MCP SSE server |
 | `OPCUA_PORT` | `4841` | Port for the simulator OPC-UA server (4840 is reserved on Windows) |
 | `PUBLISH_INTERVAL` | `2` | Seconds between simulator value updates |
 | `OPCUA_ENDPOINT` | `opc.tcp://127.0.0.1:4841/avevawaterSimulator` | Default endpoint for `discover_plant` and `opcua_discover.py` |

@@ -5,7 +5,7 @@ import logging
 import os
 from asyncua import Client, ua
 from asyncua.common.node import Node
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,7 +16,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("opcua-mcp")
 
-mcp = FastMCP("opcua-mcp", port=int(os.environ.get("FASTMCP_PORT", 8002)))
+# mcp 2.0's MCPServer constructor dropped the port= shortcut FastMCP had;
+# port is now passed to run() below instead.
+mcp = MCPServer("opcua-mcp")
 
 MAX_BROWSE_LINES = 500
 MAX_SEARCH_RESULTS = 100
@@ -569,4 +571,4 @@ async def disconnect_server() -> str:
 
 
 if __name__ == "__main__":
-    mcp.run("sse")
+    mcp.run("sse", port=int(os.environ.get("FASTMCP_PORT", 8002)))
