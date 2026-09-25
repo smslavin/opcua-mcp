@@ -6,6 +6,7 @@ import os
 from asyncua import Client, ua
 from asyncua.common.node import Node
 from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,6 +20,12 @@ logger = logging.getLogger("opcua-mcp")
 # mcp 2.0's MCPServer constructor dropped the port= shortcut FastMCP had;
 # port is now passed to run() below instead.
 mcp = MCPServer("opcua-mcp")
+
+# Every tool here only observes the plant, so all are declared read-only.
+# Clients (the chat UI, AGGREGATOR_READ_ONLY) rely on this: a tool without
+# annotations is treated as a write and gated. Connect/disconnect change this
+# server's own session, not the plant, so they count as read-only too.
+READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True)
 
 MAX_BROWSE_LINES = 500
 MAX_SEARCH_RESULTS = 100
@@ -123,7 +130,7 @@ async def _search_walk(start: Node, query: str, max_depth: int) -> list[str]:
 # Tools
 # ------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def connect_server(url: str, username: str = "", password: str = "") -> str:
     """Connect to an OPC-UA server.
 
@@ -161,7 +168,7 @@ async def connect_server(url: str, username: str = "", password: str = "") -> st
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_namespaces() -> str:
     """List all namespace URIs registered on the connected OPC-UA server.
 
@@ -174,7 +181,7 @@ async def list_namespaces() -> str:
     return "Namespaces:\n" + "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def browse_nodes(node_id: str = "", namespace_filter: str = "") -> str:
     """Browse children of an OPC-UA node.
 
@@ -232,7 +239,7 @@ async def browse_nodes(node_id: str = "", namespace_filter: str = "") -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def browse_by_path(path: str) -> str:
     """Navigate to an OPC-UA node by browse path without knowing its node ID.
 
@@ -282,7 +289,7 @@ async def browse_by_path(path: str) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def browse_tree(node_id: str = "", max_depth: int = 4) -> str:
     """Recursively browse the OPC-UA node tree from a starting node.
 
@@ -358,7 +365,7 @@ async def browse_tree(node_id: str = "", max_depth: int = 4) -> str:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def read_node(node_id: str) -> str:
     """Read the current value of an OPC-UA variable node.
 
@@ -382,7 +389,7 @@ async def read_node(node_id: str) -> str:
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def read_multiple(node_ids: list[str]) -> str:
     """Read current values for multiple OPC-UA variable nodes in a single call.
 
@@ -410,7 +417,7 @@ async def read_multiple(node_ids: list[str]) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_node_info(node_id: str) -> str:
     """Get metadata about an OPC-UA node — display name, class, data type, and description.
 
@@ -458,7 +465,7 @@ async def get_node_info(node_id: str) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def search_nodes(query: str, start_node_id: str = "", max_depth: int = 6) -> str:
     """Search OPC-UA address space by display name — case-insensitive partial match.
 
@@ -485,7 +492,7 @@ async def search_nodes(query: str, start_node_id: str = "", max_depth: int = 6) 
     return header + "\n" + "\n".join(results)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def search_in_modelview(query: str, root_node_id: str, max_depth: int = 6) -> str:
     """Search for nodes by display name within a specific subtree.
 
@@ -515,7 +522,7 @@ async def search_in_modelview(query: str, root_node_id: str, max_depth: int = 6)
     return header + "\n" + "\n".join(results)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def discover_plant(endpoint: str = "", namespace_uri: str = "", wtp_path: str = "") -> str:
     """Browse the OPC-UA plant hierarchy and return a discovery JSON for Galaxy onboarding.
 
@@ -552,7 +559,7 @@ async def discover_plant(endpoint: str = "", namespace_uri: str = "", wtp_path: 
         return f"Discovery failed: {e}"
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def disconnect_server() -> str:
     """Disconnect from the current OPC-UA server."""
     global _client, _server_url
