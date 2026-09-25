@@ -5,8 +5,8 @@
 
 .DESCRIPTION
     Installs two services:
-      AVEVA Demo OpcuaMCP        — OPC-UA MCP server     (port 8002)
-      AVEVA Demo OpcuaSimulator  — OPC-UA simulator      (port 4841, fault API port 8092)
+      AVEVA Demo OpcuaMCP        - OPC-UA MCP server     (port 8002)
+      AVEVA Demo OpcuaSimulator  - OPC-UA simulator      (port 4841, fault API port 8092)
 
     NSSM must be on PATH (https://nssm.cc/download). Run as Administrator.
 
@@ -18,14 +18,14 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+# -- Configuration --------------------------------------------------------------
 
 $Root            = $PSScriptRoot
 $OpcuaPort       = "4841"
 $PublishInterval = "2"
 $FaultHttpPort   = "8092"
 
-# ── End Configuration ──────────────────────────────────────────────────────────
+# -- End Configuration ----------------------------------------------------------
 
 if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) {
     Write-Error "nssm not found on PATH. Download from https://nssm.cc/download and add to PATH."
@@ -43,7 +43,7 @@ $Services = @(
         Env    = "FASTMCP_PORT=8002"
         LogOut = Join-Path $LogDir "opcua-mcp-stdout.log"
         LogErr = Join-Path $LogDir "opcua-mcp-stderr.log"
-        Desc   = "OPC-UA MCP Server — brownfield OPC-UA data access (port 8002)"
+        Desc   = "OPC-UA MCP Server - brownfield OPC-UA data access (port 8002)"
     },
     @{
         Name   = "AVEVA Demo OpcuaSimulator"
@@ -51,7 +51,7 @@ $Services = @(
         Env    = "OPCUA_PORT=$OpcuaPort`nPUBLISH_INTERVAL=$PublishInterval`nFAULT_HTTP_PORT=$FaultHttpPort"
         LogOut = Join-Path $LogDir "opcua-simulator-stdout.log"
         LogErr = Join-Path $LogDir "opcua-simulator-stderr.log"
-        Desc   = "OPC-UA Simulator — synthetic WTP data via asyncua (port $OpcuaPort), fault API (port $FaultHttpPort)"
+        Desc   = "OPC-UA Simulator - synthetic WTP data via asyncua (port $OpcuaPort), fault API (port $FaultHttpPort)"
     }
 )
 
@@ -88,7 +88,7 @@ foreach ($name in @("AVEVA Demo OpcuaSimulator", "AVEVA Demo OpcuaMCP")) {
     nssm start $name
     Start-Sleep -Milliseconds 500
     $status = (Get-Service -Name $name).Status
-    Write-Host "  $name — $status"
+    Write-Host "  $name - $status"
 }
 
 Write-Host "`nLogs: $LogDir"
