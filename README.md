@@ -1,6 +1,6 @@
 # opcua-mcp
 
-A natural language interface for OPC-UA servers, built on the Model Context Protocol (MCP). Enables AI assistants to connect to, browse, search, and read values from OPC-UA servers — including the discovery workflows needed to map live process data to engineering models.
+A natural language interface for an OPC-UA server, built on the Model Context Protocol (MCP). Enables AI assistants to browse, search, and read values from the OPC-UA server it is configured for — including the discovery workflows needed to map live process data to engineering models.
 
 > **Note:** This server is under active development. Browsing and value reading are read-only. `opcua_discover.py` (see below) produces a discovery JSON consumed by the graccess-mcp `onboard_from_discovery` tool to automate full Galaxy onboarding.
 
@@ -16,14 +16,14 @@ For engineers commissioning systems, performing brownfield assessments, or build
 
 ## The Solution
 
-opcua-mcp connects to any OPC-UA server and exposes its node hierarchy as AI-callable tools via the [Model Context Protocol](https://modelcontextprotocol.io/). An AI assistant can connect to the server, walk the node tree, search by name, inspect metadata, and read live values conversationally — without needing a dedicated OPC-UA client.
+opcua-mcp connects to the OPC-UA server named in `OPCUA_ENDPOINT` and exposes its node hierarchy as AI-callable tools via the [Model Context Protocol](https://modelcontextprotocol.io/). An AI assistant can walk the node tree, search by name, inspect metadata, and read live values conversationally — without needing a dedicated OPC-UA client.
 
 Combined with a SCADA MCP server, opcua-mcp enables a full brownfield onboarding workflow: browse an OPC-UA source, discover available signals, map them to engineering model attributes, and bind them to live data — driven entirely by natural language.
 
 **Example interactions:**
 
 ```
-"Connect to the OPC-UA simulator and show me what's available."
+"Show me what's on the OPC-UA server."
 "What namespaces does this server expose?"
 "Browse the Pump folder and list all the variable nodes."
 "Find all nodes with 'Flow' in their name."
@@ -41,14 +41,12 @@ Combined with a SCADA MCP server, opcua-mcp enables a full brownfield onboarding
 
 | Capability | Description |
 |---|---|
-| **Server connection** | Connect to any OPC-UA endpoint with optional username/password authentication |
+| **Server connection** | Connects to `OPCUA_ENDPOINT` on the first call, anonymously or with `OPCUA_USERNAME`/`OPCUA_PASSWORD`, and reconnects after a drop |
 | **Namespace listing** | List all registered namespaces with their indices — know your server before browsing |
-| **Node browsing** | Walk the folder hierarchy from the Objects root or any specific node; optionally filter by namespace; non-variable nodes show a child count to guide deeper browsing |
-| **Path-based navigation** | Jump directly to a node by browse path (e.g. `"0:Objects/2:Plant/2:WTP"`) without needing node IDs |
-| **Tree discovery** | Recursively browse a full subtree in one call, with binding paths for each variable node |
-| **Value reading** | Read current value, status code, and timestamp for any variable node |
-| **Multi-node reading** | Read current values for a list of node IDs in a single call — efficient for fleet-level status checks |
-| **Name search** | Case-insensitive partial-name search across the full address space or a scoped subtree |
+| **Node browsing** | List a node's children by node ID or by browse path (e.g. `"Plant/WTP"`), from the Objects root by default; optionally filter by namespace; non-variable nodes show a child count to guide deeper browsing |
+| **Tree discovery** | Recursively browse a full subtree in one call, with the browse path, data type and value of each node |
+| **Value reading** | Read current value, status code, and timestamp for one or many variable nodes in one call |
+| **Name search** | Case-insensitive partial-name search across the full address space or a scoped subtree, within a visit budget and time limit |
 | **Node inspection** | Retrieve metadata — display name, browse name, node class, data type, description |
 | **Plant discovery** | Auto-walk the plant hierarchy and emit a Galaxy-ready onboarding JSON; namespace auto-detected if not configured |
 
@@ -68,13 +66,17 @@ opcua-mcp (MCP SDK / SSE)
 
 ### Design Decisions
 
-**On-demand async client.** The OPC-UA client connects when `connect_server` is called and persists across subsequent tool calls in the session. asyncua's async client integrates cleanly with the MCP SDK's async tool execution model without requiring a background thread.
+**One configured server, one shared connection.** The server connects to `OPCUA_ENDPOINT` on the first tool call and asyncua's supervisor reconnects it after a drop. No tool can connect it elsewhere or disconnect it: every chat session and dashboard behind the aggregator shares this connection, and credentials come from the environment, never through the model.
 
-**Node IDs as opaque handles.** `browse_nodes` returns node IDs in standard OPC-UA string format (e.g. `ns=2;i=1001`). The model passes these IDs back to `read_node`, `get_node_info`, and `search_in_modelview` without needing to understand the format — they're treated as opaque handles.
+**Structured results, failures as errors.** Every tool returns structured content (with an output schema), using one node shape throughout: `node_id`, `name`, `browse_name`, `node_class`, and for variables `value`, `status`, `source_timestamp` and sometimes `data_type`. A failure — unreachable server, unknown node, bad path — is a tool error, so clients don't cache or audit it as a result.
 
-**Inline values on browse.** Variable nodes include their current value in `browse_nodes` and `browse_by_path` output. This allows the model to get a useful snapshot of a folder's contents in a single call, reducing the round-trips needed to assess an unfamiliar server.
+**Bounded walks.** `browse_tree` stops at 500 nodes and `search_nodes` at 100 matches or 2000 visited nodes; both stop after 30 s, and say which limit they hit. Every tool gives up after 45 s, before the aggregator's 60 s timeout.
 
-**Child counts on browse.** Non-variable (folder/object) nodes include a `[N children]` count in browse output. This lets the model estimate subtree size before committing to a recursive browse, avoiding unnecessarily large calls.
+**Node IDs as opaque handles.** Every result carries node IDs in standard OPC-UA string format (e.g. `ns=2;s=Plant.WTP`). The model passes these IDs back to `browse_nodes`, `read_nodes`, `get_node_info` and `search_nodes` without needing to understand the format.
+
+**Inline values on browse.** Variable nodes include their current value in `browse_nodes` output, read for the whole folder in one request. This gives the model a snapshot of a folder's contents in a single call.
+
+**Child counts on browse.** Non-variable (folder/object) nodes include `child_count` in browse output. This lets the model estimate subtree size before committing to a recursive browse, avoiding unnecessarily large calls.
 
 **Namespace auto-detection.** `discover_plant` and `opcua_discover.py` auto-detect the first non-standard namespace (index > 1) when `OPCUA_NAMESPACE_URI` is not configured. This makes the discovery workflow portable to any OPC-UA server without requiring env var changes.
 
@@ -82,7 +84,7 @@ opcua-mcp (MCP SDK / SSE)
 
 ## Included Simulator
 
-`simulator.py` runs a self-contained OPC-UA server exposing a synthetic Water Treatment Plant (WTP) data model — 10 equipment instances across 4 subsystems, 33 variable nodes total. Values update on a configurable interval using random-walk (floats) and oscillating boolean generators.
+`simulator.py` runs a self-contained OPC-UA server exposing a synthetic Water Treatment Plant (WTP) data model — 10 equipment instances across 4 subsystems, 34 variable nodes total. Its folders and variables have browse names in namespace 0 (`0:Plant`), and string node IDs in namespace 2 (`ns=2;s=Plant.WTP.Pump.RawWater_01.Flow`). Values update on a configurable interval using random-walk (floats) and oscillating boolean generators.
 
 ```
 Objects/Plant/WTP/
@@ -115,18 +117,15 @@ The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqt
 
 | Tool | Description |
 |---|---|
-| `connect_server` | Connect to an OPC-UA endpoint (anonymous or username/password) |
 | `list_namespaces` | List all registered namespace URIs with their indices — use before browsing an unfamiliar server |
-| `browse_nodes` | List children of a node (defaults to Objects root); optional `namespace_filter` URI to scope results; non-variable nodes show child counts |
-| `browse_by_path` | Navigate to a node by slash-separated browse path (e.g. `"0:Objects/2:Plant/2:WTP"`) without knowing node IDs |
-| `browse_tree` | Recursively browse a full subtree (default depth 4); returns binding paths for each variable node suitable for AVEVA System Platform InputSource configuration; capped at 500 nodes |
-| `read_node` | Read the current value, status code, and timestamp of a variable node |
-| `read_multiple` | Read current values for a list of node IDs in a single call — avoids N round-trips for fleet-level status checks |
-| `get_node_info` | Get metadata for any node — class, data type, browse name, description |
-| `search_nodes` | Case-insensitive partial name search across the address space from a start node (default Objects root); depth-limited with a 100-result cap |
-| `search_in_modelview` | Same as `search_nodes` but scoped to a specific subtree root — use when you know the relevant area to avoid scanning the whole tree |
-| `discover_plant` | Browse the full plant hierarchy and return a discovery JSON ready to pass to graccess-mcp `onboard_from_discovery`; `namespace_uri` and `wtp_path` are optional overrides — both auto-detected if not provided |
-| `disconnect_server` | Disconnect from the current server |
+| `browse_nodes` | List the children of a node, named by `node_id` or by `path` (browse names under Objects, e.g. `"Plant/WTP"` or `"2:Plant/2:WTP"`); Objects root by default; optional `namespace_filter` URI; non-variable nodes show child counts |
+| `browse_tree` | Recursively browse a subtree (default depth 4, max 8), skipping namespace 0; each node has its depth and its browse path from the start node, which `browse_nodes` accepts; capped at 500 nodes and 30 s |
+| `read_nodes` | Read current value, status code, and source timestamp for one or more node IDs (up to 200) in one request; a node that can't be read gets an error entry |
+| `get_node_info` | Get metadata for any node — class, data type, browse name, description, and a variable's value |
+| `search_nodes` | Case-insensitive partial name search below `root_node_id` (default Objects root), skipping namespace 0; stops at 100 matches, 2000 visited nodes or 30 s |
+| `discover_plant` | Browse the full plant hierarchy and return a discovery ready to pass to graccess-mcp `onboard_from_discovery`; `namespace_uri` and `wtp_path` are optional overrides — both auto-detected if not provided |
+
+Before 0.2.0, `browse_by_path` was `browse_nodes(path=...)`, `read_node` and `read_multiple` were `read_nodes`, and `search_in_modelview` was `search_nodes(root_node_id=...)`. `connect_server` and `disconnect_server` are gone: set `OPCUA_ENDPOINT` instead. The names follow one verb set with mqtt-mcp: `browse_*`, `read_*`, `search_*`/`scan_*`.
 
 ---
 
@@ -139,7 +138,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `FASTMCP_PORT` | `8002` | Port for the MCP SSE server |
 | `OPCUA_PORT` | `4841` | Port for the simulator OPC-UA server (4840 is reserved on Windows) |
 | `PUBLISH_INTERVAL` | `2` | Seconds between simulator value updates |
-| `OPCUA_ENDPOINT` | `opc.tcp://127.0.0.1:4841/avevawaterSimulator` | Default endpoint for `discover_plant` and `opcua_discover.py` |
+| `OPCUA_ENDPOINT` | `opc.tcp://127.0.0.1:4841/avevawaterSimulator` | The OPC-UA server the MCP server and `opcua_discover.py` talk to |
+| `OPCUA_USERNAME` / `OPCUA_PASSWORD` | *(blank — anonymous)* | Credentials for `OPCUA_ENDPOINT`, if it needs them |
 | `OPCUA_NAMESPACE_URI` | *(blank — auto-detected)* | Namespace URI for discovery. When blank, the first non-standard namespace (index > 1) is used automatically. Set explicitly when a server has multiple custom namespaces. |
 | `OPCUA_WTP_PATH` | `Plant.WTP` | Root node string ID for discovery. Falls back to Objects root if the path cannot be resolved on the connected server. |
 | `OPCUA_DIO_PREFIX` | `OPCDataSim.Normal.OPCUA.WaterSimGroup` | OPCDataSim binding prefix for graccess-mcp; included in `dio_binding` fields in discovery JSON. Leave blank for generic servers. |
@@ -161,6 +161,17 @@ Copy `.env.example` to `.env` and adjust as needed.
     .venv\Scripts\activate   # Windows
     pip install -r requirements.txt
     ```
+
+`requirements.txt` pins exact versions; raise them on purpose, with the tests passing.
+
+### Tests
+
+```powershell
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The tests start `simulator.py` on free ports and call every tool through an MCP client, including a simulator restart to check reconnection. They need no other service.
 
 ### Running
 
@@ -253,17 +264,16 @@ python opcua_discover.py --out my.json                 # custom output path
 
 Pass the JSON contents to `onboard_from_discovery` in graccess-mcp to create all templates, UDAs, instances, and IO bindings in one operation.
 
-The `discover_plant` MCP tool runs the same logic inline and returns the JSON directly to the AI — no file export or copy-paste needed.
+The `discover_plant` MCP tool runs the same logic inline on the server's connection and returns the result directly to the AI — no file export or copy-paste needed.
 
 ---
 
 ## Limitations and Known Constraints
 
 - **Read-only.** The server cannot write values to OPC-UA nodes. All operations are observational.
-- **Single server.** One OPC-UA connection is maintained at a time. Calling `connect_server` again replaces the existing connection.
+- **Single server.** One OPC-UA server per opcua-mcp instance, set by `OPCUA_ENDPOINT`. Run a second instance on another port for a second server.
 - **No certificate authentication.** Anonymous and username/password auth are supported; X.509 certificate-based security is not yet implemented.
 - **No subscriptions.** Values are read on demand rather than via OPC-UA subscriptions. For high-frequency monitoring, a subscription-based model would be more efficient.
-- **Credentials in tool args.** Username/password passed to `connect_server` appear as plain tool arguments in logs. Acceptable for demo/lab environments; use certificate auth for production.
 
 ---
 
@@ -272,7 +282,6 @@ The `discover_plant` MCP tool runs the same logic inline and returns the JSON di
 - **OPC-UA subscriptions** — push-based value updates for high-frequency signals
 - **Write support** — `write_node` tool with confirmation gates for setting values
 - **Certificate authentication** — X.509 security for production OPC-UA servers
-- **Multi-server sessions** — maintain connections to more than one server simultaneously
 
 ---
 

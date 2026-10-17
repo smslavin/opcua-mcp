@@ -108,7 +108,7 @@ async def _run_discovery(
         logger.info("Using Objects root for discovery")
 
     result: dict = {
-        "endpoint": str(client.server_url),
+        "endpoint": client.server_url.geturl(),
         "namespace_uri": namespace_uri,
         "namespace_index": ns,
         "types": {},
