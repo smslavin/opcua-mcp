@@ -1,4 +1,4 @@
-"""OPC-UA MCP server — browse and read OPC-UA nodes via FastMCP tools."""
+"""OPC-UA MCP server — browse and read OPC-UA nodes via MCP tools."""
 
 import asyncio
 import logging

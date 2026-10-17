@@ -3,7 +3,7 @@ opcua_discover.py — Browse an OPC-UA server's plant tree and emit a JSON
 description of types, instances, attributes, and OPCDataSim tag names.
 
 Run with the opcua-mcp venv (standard 64-bit Python):
-    cd mcp-servers\\opcua-mcp
+    cd opcua-mcp
     .venv\\Scripts\\activate
     python opcua_discover.py
 
