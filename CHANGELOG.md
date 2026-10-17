@@ -2,6 +2,12 @@
 
 Each release is a git tag, `vX.Y.Z`. Issue numbers refer to this repo unless they name another.
 
+## 0.3.0
+
+Breaking: `discover_plant` and `opcua_discover.py` return a different shape. Deploy graccess-mcp's matching change first: it reads both shapes.
+
+- **Discovery is a neutral inventory** (#3). `discover_plant` and `opcua_discover.py` return the equipment types under the plant root, their instances, and each instance's variables with node ID, browse path, data type and value (`"format": "opcua-inventory/1"`). The System Platform rules (which attribute becomes PV, UDA types, the `RawWater_01` → `RawWater01_Flow` tag names and the OPCDataSim DIO prefix) moved to graccess-mcp, which owns the galaxy side; so did `OPCUA_DIO_PREFIX`. The dead `galaxy_attr` computation and the reference to a `bind_opcua_galaxy.py` that doesn't exist are gone with them.
+
 ## 0.2.0
 
 Breaking: tool names and results changed. The galaxy site plugin in smslavin/graccess-mcp needs its matching release.
