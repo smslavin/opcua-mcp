@@ -1,3 +1,5 @@
-asyncua>=1.1.0
-mcp>=2.0
-python-dotenv>=1.0.0
+# Exact versions: the ones MDDEMO runs and the tests pass on. Raise them on purpose.
+asyncua==2.1.0
+mcp==2.3.0
+python-dotenv==1.2.4
+typing_extensions==4.16.0
