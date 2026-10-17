@@ -200,9 +200,25 @@ async def test_discover_plant(conn, simulator):
     out = await ok("discover_plant")
     assert out["endpoint"] == simulator.url
     assert out["namespace_uri"] == "urn:avevawaterSimulator"
-    assert out["types"]["Pump"]["instances"] == ["RawWater_01", "RawWater_02", "HighService_01", "HighService_02"]
-    assert {"name": "Flow", "uda_type": "float", "is_primary": True} in out["types"]["Pump"]["attributes"]
-    assert len(out["bindings"]) == 34
+    assert out["format"] == "opcua-inventory/1"
+    assert out["root"] == {"node_id": "ns=2;s=Plant.WTP", "name": "WTP"}
+    pump = next(t for t in out["types"] if t["name"] == "Pump")
+    assert [i["name"] for i in pump["instances"]] == ["RawWater_01", "RawWater_02", "HighService_01", "HighService_02"]
+    flow = pump["instances"][0]["variables"][0]
+    assert {k: flow[k] for k in ("name", "node_id", "path", "data_type")} == {
+        "name": "Flow", "node_id": FLOW, "path": "WTP/Pump/RawWater_01/Flow", "data_type": "Float"}
+    assert isinstance(flow["value"], float)
+    running = next(v for v in pump["instances"][0]["variables"] if v["name"] == "Running")
+    assert running["data_type"] == "Boolean" and isinstance(running["value"], bool)
+    assert sum(len(i["variables"]) for t in out["types"] for i in t["instances"]) == 34
+
+
+async def test_discovery_says_nothing_about_system_platform(conn):
+    # PV, UDA types and IO binding names are graccess-mcp's decision (opcua-mcp#3).
+    import json
+    text = json.dumps(await ok("discover_plant"))
+    for word in ("uda_type", "is_primary", "galaxy_attr", "dio_binding", "bindings", "OPCDataSim"):
+        assert word not in text, word
 
 
 async def test_discover_plant_bad_namespace_is_an_error(conn):

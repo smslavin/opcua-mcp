@@ -2,7 +2,7 @@
 
 A natural language interface for an OPC-UA server, built on the Model Context Protocol (MCP). Enables AI assistants to browse, search, and read values from the OPC-UA server it is configured for — including the discovery workflows needed to map live process data to engineering models.
 
-> **Note:** This server is under active development. Browsing and value reading are read-only. `opcua_discover.py` (see below) produces a discovery JSON consumed by the graccess-mcp `onboard_from_discovery` tool to automate full Galaxy onboarding.
+> **Note:** This server is under active development. Browsing and value reading are read-only. `opcua_discover.py` (see below) produces an equipment inventory that the graccess-mcp `onboard_from_discovery` tool turns into Galaxy objects.
 
 ---
 
@@ -123,7 +123,7 @@ The simulator mirrors the topic structure of the MQTT brownfield simulator (`mqt
 | `read_nodes` | Read current value, status code, and source timestamp for one or more node IDs (up to 200) in one request; a node that can't be read gets an error entry |
 | `get_node_info` | Get metadata for any node — class, data type, browse name, description, and a variable's value |
 | `search_nodes` | Case-insensitive partial name search below `root_node_id` (default Objects root), skipping namespace 0; stops at 100 matches, 2000 visited nodes or 30 s |
-| `discover_plant` | Browse the full plant hierarchy and return a discovery ready to pass to graccess-mcp `onboard_from_discovery`; `namespace_uri` and `wtp_path` are optional overrides — both auto-detected if not provided |
+| `discover_plant` | Browse the full plant hierarchy and return its equipment inventory (types, instances, variables with node ID, path, data type and value), ready to pass to graccess-mcp `onboard_from_discovery`; `namespace_uri` and `wtp_path` are optional overrides — both auto-detected if not provided |
 
 Before 0.2.0, `browse_by_path` was `browse_nodes(path=...)`, `read_node` and `read_multiple` were `read_nodes`, and `search_in_modelview` was `search_nodes(root_node_id=...)`. `connect_server` and `disconnect_server` are gone: set `OPCUA_ENDPOINT` instead. The names follow one verb set with mqtt-mcp: `browse_*`, `read_*`, `search_*`/`scan_*`.
 
@@ -142,7 +142,6 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `OPCUA_USERNAME` / `OPCUA_PASSWORD` | *(blank — anonymous)* | Credentials for `OPCUA_ENDPOINT`, if it needs them |
 | `OPCUA_NAMESPACE_URI` | *(blank — auto-detected)* | Namespace URI for discovery. When blank, the first non-standard namespace (index > 1) is used automatically. Set explicitly when a server has multiple custom namespaces. |
 | `OPCUA_WTP_PATH` | `Plant.WTP` | Root node string ID for discovery. Falls back to Objects root if the path cannot be resolved on the connected server. |
-| `OPCUA_DIO_PREFIX` | `OPCDataSim.Normal.OPCUA.WaterSimGroup` | OPCDataSim binding prefix for graccess-mcp; included in `dio_binding` fields in discovery JSON. Leave blank for generic servers. |
 
 ---
 
@@ -231,38 +230,44 @@ python opcua_discover.py --out my.json                 # custom output path
 
 ## Brownfield Discovery Script
 
-`opcua_discover.py` browses the OPC-UA server's plant tree and emits a discovery JSON consumed by the graccess-mcp `onboard_from_discovery` tool to automate full Galaxy onboarding.
+`opcua_discover.py` browses the OPC-UA server's plant tree and emits an inventory of its equipment, which the graccess-mcp `onboard_from_discovery` tool turns into Galaxy objects.
 
 **What it does:**
 1. Connects to the configured OPC-UA endpoint
 2. Auto-detects the namespace (or uses `OPCUA_NAMESPACE_URI` / `--namespace-uri` if set)
 3. Walks the plant node hierarchy (type folders → instance folders → variable nodes) starting from `OPCUA_WTP_PATH` or Objects root
-4. Identifies the primary attribute per type (first float = PV) and marks remaining as UDAs
-5. Derives OPCDataSim tag names using the convention `RawWater_01 + Flow → RawWater01_Flow`
-6. Outputs a JSON with `types`, `instances`, `attributes`, and `bindings`
+4. Outputs each type, its instances, and each instance's variables with node ID, browse path, data type and current value
 
-**Output JSON structure:**
+It says what the server has and nothing about System Platform. Which attribute becomes PV, the UDA types and the IO binding names are graccess-mcp's decision (opcua-mcp#3).
+
+**Output JSON structure (`"format": "opcua-inventory/1"`):**
 ```json
 {
+  "format": "opcua-inventory/1",
+  "endpoint": "opc.tcp://127.0.0.1:4841/avevawaterSimulator",
   "namespace_uri": "urn:avevawaterSimulator",
   "namespace_index": 2,
-  "types": {
-    "Pump": {
-      "instances": ["RawWater_01", "RawWater_02", "..."],
-      "attributes": [{"name": "Flow", "uda_type": "float", "is_primary": true}, "..."]
-    }
-  },
-  "bindings": [
+  "root": {"node_id": "ns=2;s=Plant.WTP", "name": "WTP"},
+  "types": [
     {
-      "tagname": "RawWater_01",
-      "galaxy_attr": "PV",
-      "dio_binding": "OPCDataSim.Normal.OPCUA.WaterSimGroup.RawWater01_Flow"
+      "name": "Pump",
+      "node_id": "ns=2;s=Plant.WTP.Pump",
+      "instances": [
+        {
+          "name": "RawWater_01",
+          "node_id": "ns=2;s=Plant.WTP.Pump.RawWater_01",
+          "variables": [
+            {"name": "Flow", "node_id": "ns=2;s=Plant.WTP.Pump.RawWater_01.Flow",
+             "path": "WTP/Pump/RawWater_01/Flow", "data_type": "Float", "value": 412.6}
+          ]
+        }
+      ]
     }
   ]
 }
 ```
 
-Pass the JSON contents to `onboard_from_discovery` in graccess-mcp to create all templates, UDAs, instances, and IO bindings in one operation.
+Pass the JSON contents to `onboard_from_discovery` in graccess-mcp to create the templates, UDAs, instances, and IO bindings in one operation.
 
 The `discover_plant` MCP tool runs the same logic inline on the server's connection and returns the result directly to the AI — no file export or copy-paste needed.
 

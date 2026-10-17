@@ -590,42 +590,49 @@ async def search_nodes(query: str, root_node_id: str = "", max_depth: int = 6) -
     return result
 
 
-class DiscoveredAttribute(TypedDict):
+class DiscoveredVariable(TypedDict):
     name: str
-    uda_type: str
-    is_primary: bool
+    node_id: str
+    path: str                 # browse names from the plant root, "/"-separated
+    data_type: str | None     # "Float", "Boolean", ...; None if unreadable
+    value: Any
+
+
+class DiscoveredInstance(TypedDict):
+    name: str
+    node_id: str
+    variables: list[DiscoveredVariable]
 
 
 class DiscoveredType(TypedDict):
-    instances: list[str]
-    attributes: list[DiscoveredAttribute]
+    name: str
+    node_id: str
+    instances: list[DiscoveredInstance]
 
 
-class DiscoveredBinding(TypedDict):
-    tagname: str
-    type: str
-    attr_name: str
-    galaxy_attr: str
-    tag: str
-    dio_binding: str
+class DiscoveredRoot(TypedDict):
+    node_id: str
+    name: str
 
 
 class Discovery(TypedDict):
+    format: str               # "opcua-inventory/1"
     endpoint: str
     namespace_uri: str
     namespace_index: int
-    types: dict[str, DiscoveredType]
-    bindings: list[DiscoveredBinding]
+    root: DiscoveredRoot
+    types: list[DiscoveredType]
 
 
 @_tool
 async def discover_plant(namespace_uri: str = "", wtp_path: str = "") -> Discovery:
-    """Walk the plant hierarchy and return a discovery for Galaxy onboarding.
+    """Walk the plant hierarchy and return its equipment inventory, for Galaxy onboarding.
 
-    Runs the same discovery as opcua_discover.py: equipment types, their
-    instances, the primary attribute (PV) per type, and an IO binding for
-    every variable. Pass the result to graccess-mcp's onboard_from_discovery
-    to create the templates, UDAs, instances and IO bindings.
+    Runs the same discovery as opcua_discover.py: the equipment types under
+    the plant root, their instances, and each instance's variables with
+    node ID, browse path, data type and current value. It says nothing about
+    System Platform: pass it to graccess-mcp's onboard_from_discovery, which
+    decides the templates, UDAs, PV and IO bindings.
 
     Args:
         namespace_uri: Namespace to discover in. Blank: the first custom namespace.
